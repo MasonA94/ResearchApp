@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import com.example.researchapp.ui.theme.ResearchAppTheme
+import com.google.maps.android.compose.GoogleMap
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,7 +102,7 @@ fun GreetingPreview() {
 
 @Composable
 fun MapScreen() {
-    Text("Map Screen")
+    GoogleMap()
 }
 
 @Composable
