@@ -1,11 +1,15 @@
 package com.example.researchapp
 
+import android.Manifest
 import android.R.attr.description
+import android.annotation.SuppressLint
 import android.icu.text.CaseMap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,16 +33,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import com.example.researchapp.ui.theme.ResearchAppTheme
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.google.maps.android.compose.GoogleMap
+import android.content.pm.PackageManager
+import androidx.compose.runtime.mutableStateListOf
+import androidx.core.content.ContextCompat
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.Marker
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.rememberUpdatedMarkerState
+import com.google.maps.android.ktx.model.cameraPosition
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,6 +72,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ResearchAppApp() {
     var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.MAP) }
+
+    val potholes = remember {
+        mutableStateListOf<PotholeReport>()
+    }
 
     NavigationSuiteScaffold(
         navigationSuiteItems = {
@@ -79,8 +99,16 @@ fun ResearchAppApp() {
                 modifier = Modifier.padding(innerPadding)
             ) {
                 when (currentDestination) {
-                    AppDestinations.MAP -> MapScreen()
-                    AppDestinations.REPORT -> ReportScreen()
+                    AppDestinations.MAP -> MapScreen(
+                        potholes = potholes
+                    )
+                    AppDestinations.REPORT -> {
+                        ReportScreen(
+                            onReportSubmitted = { report ->
+                                potholes.add(report)
+                            }
+                        )
+                    }
                     AppDestinations.PROFILE ->  ProfileScreen()
                     AppDestinations.FEED -> FeedScreen()
                     AppDestinations.STATS -> StatsScreen()
@@ -120,12 +148,29 @@ fun GreetingPreview() {
 }
 
 @Composable
-fun MapScreen() {
-    GoogleMap()
+fun MapScreen(
+    potholes: List<PotholeReport>
+) {
+    GoogleMap(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        potholes.forEach {
+            potholeReport -> Marker(
+                state = rememberUpdatedMarkerState(
+                    position = LatLng(
+                        potholeReport.latitude,
+                        potholeReport.longitude
+                    )
+                )
+            )
+        }
+    }
 }
 
 @Composable
-fun ReportScreen() {
+fun ReportScreen(
+    onReportSubmitted: (PotholeReport) -> Unit
+) {
 
     var description by rememberSaveable {
         mutableStateOf("")
@@ -143,6 +188,14 @@ fun ReportScreen() {
         mutableStateOf(false)
     }
 
+    var latitude by rememberSaveable {
+        mutableStateOf<Double?>(null)
+    }
+
+    var longitude by rememberSaveable {
+        mutableStateOf<Double?>(null)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -153,7 +206,13 @@ fun ReportScreen() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        LocationSection()
+        LocationSection(
+            latitude = latitude,
+            longitude = longitude,
+            onLocationFound = { lat, lng ->
+                latitude = lat
+                longitude = lng
+            })
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -183,7 +242,20 @@ fun ReportScreen() {
 
         SubmitButton(
             onSubmit = {
-                // WIP
+                val lat = latitude
+                val lng = longitude
+
+                if (lat != null && lng != null) {
+                    val report = PotholeReport(
+                        latitude = lat,
+                        longitude = lng,
+                        description = description,
+                        severity = severity,
+                        bikeLane = bikeLaneSelected,
+                        obscured = obscuredSelected
+                    )
+                    onReportSubmitted(report)
+                }
             }
         )
     }
@@ -218,7 +290,50 @@ fun ReportHeader() {
 }
 
 @Composable
-fun LocationSection() {
+fun LocationSection(
+    latitude: Double?,
+    longitude: Double?,
+    onLocationFound: (Double, Double) -> Unit
+) {
+
+    val context = LocalContext.current
+
+    val fusedLocationClient =
+        remember {
+            LocationServices.getFusedLocationProviderClient(context)
+        }
+
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocation() {
+        fusedLocationClient.getCurrentLocation(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            null
+        ).addOnSuccessListener { location ->
+
+            if (location != null) {
+                onLocationFound(
+                    location.latitude,
+                    location.longitude
+                )
+            }
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+
+        val fineLocationGranted =
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
+
+        val coarseLocationGranted =
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+        if (fineLocationGranted || coarseLocationGranted) {
+            getCurrentLocation()
+        }
+    }
+
     Text(
         text = "Location",
         style = MaterialTheme.typography.titleMedium
@@ -228,11 +343,37 @@ fun LocationSection() {
 
     OutlinedButton(
         onClick = {
-            // We'll get the location here later
+            val fineLocationGranted =
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+
+            val coarseLocationGranted =
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+
+            if (fineLocationGranted || coarseLocationGranted) {
+                getCurrentLocation()
+            } else {
+                permissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    )
+                )
+            }
         },
         modifier = Modifier.fillMaxWidth()
     ) {
         Text("Use Current Location")
+    }
+    if (latitude != null && longitude != null) {
+        Text(
+            text = "Latitude: $latitude\nLongitude: $longitude"
+        )
     }
 }
 
@@ -315,6 +456,7 @@ fun TagsSection(obscuredSelected: Boolean,
 fun SubmitButton(
     onSubmit: () -> Unit
 ) {
+
     Button(
         onClick = onSubmit,
         modifier = Modifier.fillMaxWidth()
@@ -322,3 +464,12 @@ fun SubmitButton(
         Text("Submit Report")
     }
 }
+
+data class PotholeReport(
+    val latitude: Double,
+    val longitude: Double,
+    val description: String,
+    val severity: Float,
+    val bikeLane: Boolean,
+    val obscured: Boolean
+)
