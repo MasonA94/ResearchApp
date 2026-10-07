@@ -1,9 +1,7 @@
 package com.example.researchapp
 
 import android.Manifest
-import android.R.attr.description
 import android.annotation.SuppressLint
-import android.icu.text.CaseMap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -38,7 +36,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
@@ -48,13 +45,16 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.maps.android.compose.GoogleMap
 import android.content.pm.PackageManager
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.core.content.ContextCompat
+import com.example.researchapp.data.DatabaseProvider
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.Marker
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.rememberUpdatedMarkerState
-import com.google.maps.android.ktx.model.cameraPosition
+import com.example.researchapp.data.PotholeReport
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,13 +68,27 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("CoroutineCreationDuringComposition")
 @PreviewScreenSizes
 @Composable
 fun ResearchAppApp() {
     var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.MAP) }
 
-    val potholes = remember {
-        mutableStateListOf<PotholeReport>()
+    val context = LocalContext.current
+
+    val database = remember {
+        DatabaseProvider.getDatabase(context)
+    }
+
+    val potholeDao = database.potholeDao()
+    val scope = rememberCoroutineScope()
+
+    val potholes by potholeDao
+        .getAll()
+        .collectAsState(initial = emptyList())
+
+    scope.launch {
+        // suspend functions can be called here
     }
 
     NavigationSuiteScaffold(
@@ -105,7 +119,9 @@ fun ResearchAppApp() {
                     AppDestinations.REPORT -> {
                         ReportScreen(
                             onReportSubmitted = { report ->
-                                potholes.add(report)
+                                scope.launch {
+                                    potholeDao.insert(report)
+                                }
                             }
                         )
                     }
@@ -246,7 +262,7 @@ fun ReportScreen(
                 val lng = longitude
 
                 if (lat != null && lng != null) {
-                    val report = PotholeReport(
+                    val report = PotholeReport (
                         latitude = lat,
                         longitude = lng,
                         description = description,
@@ -464,12 +480,3 @@ fun SubmitButton(
         Text("Submit Report")
     }
 }
-
-data class PotholeReport(
-    val latitude: Double,
-    val longitude: Double,
-    val description: String,
-    val severity: Float,
-    val bikeLane: Boolean,
-    val obscured: Boolean
-)
