@@ -45,6 +45,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.maps.android.compose.GoogleMap
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -54,6 +55,8 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.rememberUpdatedMarkerState
 import com.example.researchapp.data.PotholeReport
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -83,6 +86,10 @@ fun ResearchAppApp() {
     val potholeDao = database.potholeDao()
     val scope = rememberCoroutineScope()
 
+    var selectedLocation by remember {
+        mutableStateOf<LatLng?>(null)
+    }
+
     val potholes by potholeDao
         .getAll()
         .collectAsState(initial = emptyList())
@@ -96,12 +103,14 @@ fun ResearchAppApp() {
             AppDestinations.entries.forEach {
                 item(
                     icon = {
-                        Icon(
-                            painterResource(it.icon),
-                            contentDescription = it.label
-                        )
+                        it.icon?.let { id ->
+                            Icon(
+                                painterResource(id),
+                                contentDescription = it.label
+                            )
+                        }
                     },
-                    label = { Text(it.label) },
+                    label = { it.label?.let { text -> Text(text) } },
                     selected = it == currentDestination,
                     onClick = { currentDestination = it }
                 )
@@ -114,13 +123,26 @@ fun ResearchAppApp() {
             ) {
                 when (currentDestination) {
                     AppDestinations.MAP -> MapScreen(
-                        potholes = potholes
+                        potholes = potholes,
+                        onLocationSelected = { location ->
+                            selectedLocation = location
+                            currentDestination = AppDestinations.REPORT
+                        }
                     )
                     AppDestinations.REPORT -> {
                         ReportScreen(
+                            initialLocation = selectedLocation,
                             onReportSubmitted = { report ->
                                 scope.launch {
-                                    potholeDao.insert(report)
+                                    try {
+                                        potholeDao.insert(report)
+                                        selectedLocation = null
+                                        // Only navigate after successful insertion
+                                        currentDestination = AppDestinations.MAP
+
+                                    } catch (e: Exception) {
+                                        Log.e("ResearchApp", "Failed to save report", e)
+                                    }
                                 }
                             }
                         )
@@ -135,8 +157,8 @@ fun ResearchAppApp() {
 }
 
 enum class AppDestinations(
-    val label: String,
-    val icon: Int,
+    val label: String?,
+    val icon: Int?,
 ) {
 
 
@@ -144,7 +166,7 @@ enum class AppDestinations(
     FEED("Feed", R.drawable.outline_feed_24),
     REPORT("Report", R.drawable.outline_report_24),
     STATS("Stats", R.drawable.outline_stats_24),
-    PROFILE("Profile", R.drawable.outline_account_circle_24)
+    PROFILE("Profile", R.drawable.outline_account_circle_24),
 }
 
 @Composable
@@ -165,11 +187,25 @@ fun GreetingPreview() {
 
 @Composable
 fun MapScreen(
-    potholes: List<PotholeReport>
+    potholes: List<PotholeReport>,
+    onLocationSelected: (LatLng) -> Unit
 ) {
+
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(
+            LatLng(34.0007, -81.0348),
+            5f
+        )
+    }
     GoogleMap(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
+        cameraPositionState = cameraPositionState,
+        onMapClick = { location ->
+            onLocationSelected(location)
+        }
     ) {
+
+
         potholes.forEach {
             potholeReport -> Marker(
                 state = rememberUpdatedMarkerState(
@@ -177,14 +213,18 @@ fun MapScreen(
                         potholeReport.latitude,
                         potholeReport.longitude
                     )
-                )
+                ),
+                title = "Pothole",
+                snippet = potholeReport.description
             )
         }
     }
 }
 
+
 @Composable
 fun ReportScreen(
+    initialLocation: LatLng?,
     onReportSubmitted: (PotholeReport) -> Unit
 ) {
 
@@ -205,12 +245,13 @@ fun ReportScreen(
     }
 
     var latitude by rememberSaveable {
-        mutableStateOf<Double?>(null)
+        mutableStateOf(initialLocation?.latitude)
     }
 
     var longitude by rememberSaveable {
-        mutableStateOf<Double?>(null)
+        mutableStateOf(initialLocation?.longitude)
     }
+
 
     Column(
         modifier = Modifier
@@ -386,6 +427,7 @@ fun LocationSection(
     ) {
         Text("Use Current Location")
     }
+
     if (latitude != null && longitude != null) {
         Text(
             text = "Latitude: $latitude\nLongitude: $longitude"
